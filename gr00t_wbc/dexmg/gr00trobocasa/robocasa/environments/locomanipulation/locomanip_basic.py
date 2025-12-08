@@ -670,7 +670,6 @@ class LMPnPAppleToPlate(LMPnPBottleToPlate):
                     rotation=np.array([-np.pi, np.pi]),
                     reference_pos=np.array([0.4, 0, self.table.mj_obj.top_offset[2]]),
                 ),
-                rgba=(0.85, 0.1, 0.1, 1.0),
             )
         )
         return [self.table, self.table_target, self.apple, self.plate]
