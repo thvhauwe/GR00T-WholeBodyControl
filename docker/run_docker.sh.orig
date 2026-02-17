@@ -388,13 +388,28 @@ DOCKER_RUN_ARGS="--hostname $HOSTNAME \
     --group-add $INPUT_GID \
     $GPU_RUNTIME_ARGS \
     --ipc=host \
-    --net=host \
+    --net=host  \
+    --privileged \
+    --device=/dev \
+    $GPU_ENV_VARS \
+    -p 5678:5678 \
     -e DISPLAY=$DISPLAY \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    -e NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility \
+    -e __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    -e USERNAME=$USERNAME \
+    -e GR00T_WBC_DIR="$DOCKER_HOME_DIR/Projects/$WORKTREE_NAME" \
+    -v /dev/bus/usb:/dev/bus/usb \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v $PROJECT_DIR:$DOCKER_HOME_DIR/Projects/$(basename "$PROJECT_DIR") \
-    -e GR00T_WBC_DIR="$DOCKER_HOME_DIR/Projects/$WORKTREE_NAME"
-"
-
+    -v $HOME/.ssh:$DOCKER_HOME_DIR/.ssh \
+    -v $HOME/.gear:$DOCKER_HOME_DIR/.gear \
+    -v $HOME/.Xauthority:$DOCKER_HOME_DIR/.Xauthority \
+    -v $PROJECT_DIR:$DOCKER_HOME_DIR/Projects/$(basename "$PROJECT_DIR")
+    --device /dev/snd \
+    --group-add audio \
+    -e PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
+    -v /run/user/$(id -u)/pulse/native:/run/user/$(id -u)/pulse/native \
+    -v $HOME/.config/pulse/cookie:/home/$USERNAME/.config/pulse/cookie"
 
 # Check if RL mode first, then handle container logic
 if [ "$DEPLOY" = true ]; then

@@ -56,7 +56,7 @@ RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
         echo 'KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0664", GROUP="plugdev"' > /etc/udev/rules.d/99-hidraw-permissions.rules && \
         usermod -aG plugdev ${USERNAME}; \
         # Pico setup
-        apt-get install -y xdg-utils && \
+        apt-get install -y xdg-utils ros-humble-rmw-cyclonedds-cpp && \
         dpkg -i ${HOME_DIR}/XRoboToolkit_PC_Service_1.0.0_ubuntu_22.04_amd64.deb; \
     else \
         echo "Skipping x86-only hardware packages on $(dpkg --print-architecture)"; \
