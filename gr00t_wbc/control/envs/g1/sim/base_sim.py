@@ -60,6 +60,7 @@ class DefaultEnv:
         # Initialize scene (defined in subclasses)
         self.init_scene()
         self.last_reward = 0
+        self.latest_images = {}
 
         # Setup offscreen rendering if needed
         self.offscreen = offscreen
@@ -450,6 +451,7 @@ class DefaultEnv:
         if self.image_publish_process is not None:
             self.image_publish_process.update_shared_memory(render_caches)
 
+        self.latest_images = render_caches
         return render_caches
 
     def handle_keyboard_button(self, key):
@@ -598,6 +600,47 @@ class BottleEnv(DefaultEnv):
         return {"bottle_pos": obs_pos, "bottle_quat": obs_quat}
 
 
+class QRSceneEnv(DefaultEnv):
+    """Environment with a QR code object for navigation tasks"""
+
+    def __init__(
+        self,
+        config: Dict[str, any],
+        onscreen: bool = False,
+        offscreen: bool = False,
+        enable_image_publish: bool = False,
+    ):
+        # Override the robot scene
+        config = config.copy()
+        config["ROBOT_SCENE"] = "gr00t_wbc/control/robot_model/model_data/g1/qr_code_scene.xml"
+        
+        camera_configs = {
+            "head_camera": {
+                "height": 480,
+                "width": 640,
+            },
+        }
+        
+        super().__init__(config, "qr_code", camera_configs, onscreen, offscreen, enable_image_publish)
+
+    def set_qr_pose(self, pos, quat):
+        """No-op as QR codes are now static in the MJCF"""
+        pass
+
+    def get_privileged_obs(self):
+        """Return positions of the static QR codes"""
+        obs = {}
+        for i in range(2):
+            try:
+                qr_body_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, f"qr_code_{i}")
+                if qr_body_id != -1:
+                    obs[f"qr_pos_{i}"] = self.mj_data.xpos[qr_body_id].copy()
+                    obs[f"qr_quat_{i}"] = self.mj_data.xquat[qr_body_id].copy()
+            except:
+                pass
+        return obs
+
+
 class BaseSimulator:
     """Base simulator class that handles initialization and running of simulations"""
 
@@ -632,6 +675,8 @@ class BaseSimulator:
             self.sim_env = BoxEnv(config, **kwargs)
         elif env_name == "pnp_bottle":
             self.sim_env = BottleEnv(config, **kwargs)
+        elif env_name == "qr_code":
+            self.sim_env = QRSceneEnv(config, **kwargs)
         else:
             raise ValueError(f"Invalid environment name: {env_name}")
 
@@ -745,9 +790,7 @@ class BaseSimulator:
         return obs
 
     def handle_keyboard_button(self, key):
-        # Only handles keyboard buttons for default env.
-        if self.env_name == "default":
-            self.sim_env.handle_keyboard_button(key)
+        self.sim_env.handle_keyboard_button(key)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ DOMAIN_ID: 0 # Domain id
 # Network Interface, "lo" for simulation and the one with "192.168.123.222" for real robot
 # INTERFACE: "enxe8ea6a9c4e09"
 # INTERFACE: "enxc8a3623c9cb7"
-INTERFACE: "lo"
+INTERFACE: "enp18s0"
+# INTERFACE: "lo"
 SIMULATOR: "mujoco"  # "robocasa"
 
 USE_JOYSTICK: 0 # Simulate Unitree WirelessController using a gamepad (0: disable, 1: enable)

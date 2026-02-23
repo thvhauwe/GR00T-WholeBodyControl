@@ -4,6 +4,7 @@ import numpy as np
 import tyro
 from scipy.spatial.transform import Rotation as R
 import mujoco
+import cv2
 
 from gr00t_wbc.control.envs.g1.g1_env import G1Env
 from gr00t_wbc.control.main.constants import (
@@ -86,6 +87,11 @@ def get_current_pose(obs):
     return np.array([x, y, yaw])
 
 def main(config: ControlLoopConfig):
+    # Phase 2 overrides
+    config.env_name = "qr_code"
+    config.enable_offscreen = True
+    config.enable_onscreen = True
+
     ros_manager = ROSManager(node_name=CONTROL_NODE_NAME)
     node = ros_manager.node
 
@@ -133,6 +139,7 @@ def main(config: ControlLoopConfig):
     ]
     current_goal_idx = 0
     controller = OmnidirectionalController()
+    qr_detector = cv2.QRCodeDetector()
 
     rate = node.create_rate(config.control_frequency)
     
@@ -140,8 +147,10 @@ def main(config: ControlLoopConfig):
 
     initial_upper_body_pose = None
     last_log_time = 0
+    state = "NAVIGATING_TO_WAYPOINT" # NAVIGATING_TO_WAYPOINT, SEARCHING_FOR_QR, MANEUVERING_TO_QR, DWELLING
     goal_reached_time = None
     dwell_time = 5.0
+    qr_detected_time = None
 
     try:
         while ros_manager.ok():
@@ -159,37 +168,100 @@ def main(config: ControlLoopConfig):
                         robot_model.get_joint_group_indices("upper_body")
                     ].copy()
 
-                # Navigation logic
                 current_pose = get_current_pose(obs)
                 goal_pose = goals[current_goal_idx]
-                
                 t_now = time.monotonic()
-                
-                # Check for goal reached (incl orientation)
-                dx = goal_pose[0] - current_pose[0]
-                dy = goal_pose[1] - current_pose[1]
-                dist = np.sqrt(dx**2 + dy**2)
-                
-                # Yaw error to goal orientation
-                yaw_error = goal_pose[2] - current_pose[2]
-                yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi
-                
-                is_at_goal = dist < 0.1 and abs(yaw_error) < 0.1
-                
-                if goal_reached_time is None:
-                    if is_at_goal:
-                        goal_reached_time = t_now
-                        print(f"Goal {current_goal_idx} reached! Dwelling for {dwell_time}s...")
-                        nav_cmd = [0.0, 0.0, 0.0]
+                nav_cmd = [0.0, 0.0, 0.0]
+
+                if state == "NAVIGATING_TO_WAYPOINT":
+                    dx = goal_pose[0] - current_pose[0]
+                    dy = goal_pose[1] - current_pose[1]
+                    dist = np.sqrt(dx**2 + dy**2)
+                    yaw_error = goal_pose[2] - current_pose[2]
+                    yaw_error = (yaw_error + np.pi) % (2 * np.pi) - np.pi
+                    
+                    if dist < 0.2 and abs(yaw_error) < 0.15:
+                        print(f"Waypoint {current_goal_idx} reached. Searching for static QR code...")
+                        state = "SEARCHING_FOR_QR"
                     else:
                         nav_cmd = controller.compute_command(current_pose, goal_pose)
-                else:
-                    # Currently dwelling
+
+                elif state == "SEARCHING_FOR_QR":
+                    # Look for QR in head_camera_image
+                    if "head_camera_image" in obs:
+                        img = obs["head_camera_image"]
+                        # Convert RGB to BGR for OpenCV
+                        bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        data, bbox, rectified_qr = qr_detector.detectAndDecode(bgr_img)
+                        if data:
+                            print(f"QR detected: {data}. Switching to maneuvering.")
+                            state = "MANEUVERING_TO_QR"
+                            qr_detected_time = t_now
+                        else:
+                            # Rotate slowly to find it if not immediately visible
+                            nav_cmd = [0.0, 0.0, 0.2]
+                    else:
+                        print("Waiting for camera image...")
+                        nav_cmd = [0.0, 0.0, 0.0]
+
+                elif state == "MANEUVERING_TO_QR":
+                    if "head_camera_image" in obs:
+                        img = obs["head_camera_image"]
+                        bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        data, bbox, _ = qr_detector.detectAndDecode(bgr_img)
+                        if data and bbox is not None:
+                            # Simple visual servoing: center the QR in the image
+                            # Image center is (320, 240) for 640x480
+                            qr_center = np.mean(bbox[0], axis=0)
+                            err_x = (qr_center[0] - 320) / 320.0 # Normalized error -1 to 1
+                            
+                            # Forward velocity to get closer until it occupies large area
+                            qr_area = cv2.contourArea(bbox[0])
+                            target_area = 20000 # Tune this for "reaching" distance
+                            err_area = (target_area - qr_area) / target_area
+                            
+                            vx = np.clip(0.1 * err_area, 0.0, 0.1)
+                            omega = np.clip(-1.0 * err_x, -0.5, 0.5)
+                            nav_cmd = [vx, 0.0, omega]
+                            
+                            if qr_area > target_area * 0.9 and abs(err_x) < 0.1:
+                                print("QR maneuver complete. Dwelling...")
+                                state = "DWELLING"
+                                goal_reached_time = t_now
+                        else:
+                            # Lost QR, stay still or search again
+                            nav_cmd = [0.0, 0.0, 0.0]
+                            if t_now - qr_detected_time > 2.0:
+                                state = "SEARCHING_FOR_QR"
+                    else:
+                        nav_cmd = [0.0, 0.0, 0.0]
+
+                elif state == "DWELLING":
                     nav_cmd = [0.0, 0.0, 0.0]
                     if t_now - goal_reached_time > dwell_time:
                         current_goal_idx = (current_goal_idx + 1) % len(goals)
                         goal_reached_time = None
-                        print(f"Switching to goal {current_goal_idx}: {goals[current_goal_idx]}")
+                        state = "NAVIGATING_TO_WAYPOINT"
+                        print(f"Switching to waypoint {current_goal_idx}: {goals[current_goal_idx]}")
+
+                # --- Visualization: Camera Stream ---
+                if "head_camera_image" in obs:
+                    img = obs["head_camera_image"]
+                    bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    
+                    # Redetection for visualization if we haven't already in this frame
+                    # (In a real scenario, we'd reuse the existing bbox/data)
+                    data, bbox, _ = qr_detector.detectAndDecode(bgr_img)
+                    if data and bbox is not None:
+                        # Draw bounding box
+                        bbox = bbox.astype(int)
+                        for i in range(len(bbox[0])):
+                            cv2.line(bgr_img, tuple(bbox[0][i]), tuple(bbox[0][(i+1) % 4]), (0, 255, 0), 3)
+                        cv2.putText(bgr_img, data, (bbox[0][0][0], bbox[0][0][1] - 10), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    
+                    cv2.imshow("Head Camera Stream (QR)", bgr_img)
+                    cv2.waitKey(1)
 
                 dt = 1 / config.control_frequency
                 
@@ -209,75 +281,23 @@ def main(config: ControlLoopConfig):
 
                 env.queue_action(wbc_action)
 
-                # Status publishing
-                policy_use_action = False
-                try:
-                    if hasattr(wbc_policy, "lower_body_policy"):
-                        policy_use_action = getattr(
-                            wbc_policy.lower_body_policy, "use_policy_action", False
-                        )
-                except:
-                    pass
-
-                policy_status_msg = {"use_policy_action": policy_use_action, "timestamp": t_now}
-                lower_body_policy_status_pub.publish(policy_status_msg)
-
-                joint_safety_ok = env.get_joint_safety_status()
-                joint_safety_status_pub.publish({
-                    "joint_safety_ok": joint_safety_ok,
-                    "timestamp": t_now,
-                })
-
-                # Data exporting
-                msg = deepcopy(obs)
-                for key in list(msg.keys()):
-                    if key.endswith("_image"):
-                        del msg[key]
-                
-                msg.update({
-                    "action": wbc_action["q"],
-                    "action.eef": DEFAULT_WRIST_POSE,
-                    "base_height_command": DEFAULT_BASE_HEIGHT,
-                    "navigate_command": nav_cmd,
-                    "timestamps": {"main_loop": time.time(), "proprio": time.time()},
-                })
-                data_exp_pub.publish(msg)
-
                 # Periodic logging (~1Hz)
                 if t_now - last_log_time > 1.0:
-                    print(f"--- Navigation Status ---")
-                    print(f"Goal {current_goal_idx}: {goal_pose}")
-                    print(f"Current pose: {current_pose}")
-                    print(f"Distance to goal: {dist:.2f}")
-                    print(f"Yaw error: {yaw_error:.2f}")
-                    print(f"Nav cmd: linear=({nav_cmd[0]:.2f}, {nav_cmd[1]:.2f}), angular={nav_cmd[2]:.2f}")
+                    print(f"--- State: {state} ---")
+                    if state == "NAVIGATING_TO_WAYPOINT":
+                        print(f"Goal {current_goal_idx}: {goal_pose}")
+                        print(f"Dist: {dist:.2f}, YawErr: {yaw_error:.2f}")
                     last_log_time = t_now
 
                 # Visualization
                 if env.sim and hasattr(env.sim.sim_env, "viewer") and env.sim.sim_env.viewer:
                     viewer = env.sim.sim_env.viewer
-                    # Clear previous user geoms
                     viewer.user_scn.ngeom = 0
                     for i, goal in enumerate(goals):
-                        # Active goal: Green, Inactive: Yellow
-                        # Transparent spheres
                         rgba = [0, 1, 0, 0.5] if i == current_goal_idx else [1, 1, 0, 0.3]
-                        # mujoco.mjv_initGeom(
-                        #     env.sim.sim_env.mj_model,
-                        #     env.sim.sim_env.mj_data,
-                        #     type=mujoco.mjtGeom.mjGEOM_SPHERE,
-                        #     size=[0.1, 0, 0],
-                        #     pos=np.array([goal[0], goal[1], 0.1]),
-                        #     mat=np.eye(3).flatten(),
-                        #     rgba=np.array(rgba),
-                        #     scene=viewer.user_scn
-                        # )
-
                         geom_id = viewer.user_scn.ngeom
                         viewer.user_scn.ngeom += 1
-
                         geom = viewer.user_scn.geoms[geom_id]
-
                         mujoco.mjv_initGeom(
                             geom,
                             mujoco.mjtGeom.mjGEOM_SPHERE,
@@ -294,8 +314,11 @@ def main(config: ControlLoopConfig):
 
     except Exception as e:
         print(f"Error in control loop: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         print("Cleaning up...")
+        cv2.destroyAllWindows()
         dispatcher.stop()
         ros_manager.shutdown()
         env.close()

@@ -183,6 +183,7 @@ class G1Env(HumanoidEnv):
 
         if self.use_sim and self.sim:
             obs.update(self.sim.get_privileged_obs())
+            obs.update(self.sim.sim_env.latest_images)
 
         # Store last observation for safety checking
         self.last_obs = obs

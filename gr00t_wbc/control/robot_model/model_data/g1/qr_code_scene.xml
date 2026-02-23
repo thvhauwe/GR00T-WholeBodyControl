@@ -1,6 +1,5 @@
-<mujoco model="g1_43dof scene">
-  <include file="g1_29dof_with_hand.xml"/>
-  <!-- Note that the hand model in g1_29dof_with_hand.xml is not stable for simulation. -->
+<mujoco model="g1_qr_scene">
+  <include file="g1_29dof_with_hand_rev_1_0_activatedfinger.xml"/>
 
   <statistic center="0 0 0.5" extent="2.0"/>
 
@@ -15,16 +14,27 @@
     <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
       markrgb="0.8 0.8 0.8" width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    
+    <!-- Real QR code texture -->
+    <texture type="2d" name="qr_tex" file="meshes/qr_goal.png"/>
+    <material name="qr_mat" texture="qr_tex" texuniform="true"/>
   </asset>
 
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
-    <!-- Site -->
-    <site name="com_marker" pos="0.1 0 0" size="0.05" rgba="1 0 0 0" type="sphere"/>
-  </worldbody>
+    
+    <!-- Static QR Code 0 -->
+    <body name="qr_code_0" pos="5.0 0 0.001">
+      <geom name="qr_plate_0" size="0.1 0.1 0.001" type="box" material="qr_mat" />
+    </body>
 
-  <default>
-    <geom friction="1.0"/>
-  </default>
+    <!-- Static QR Code 1 -->
+    <body name="qr_code_1" pos="-0.6 0 0.001" quat="0 0 0 1">
+      <geom name="qr_plate_1" size="0.1 0.1 0.001" type="box" material="qr_mat" />
+    </body>
+
+    <!-- Fixed global view camera -->
+    <camera name="global_view" pos="2.910 -5.040 3.860" xyaxes="0.866 0.500 0.000 -0.250 0.433 0.866"/>
+  </worldbody>
 </mujoco>
