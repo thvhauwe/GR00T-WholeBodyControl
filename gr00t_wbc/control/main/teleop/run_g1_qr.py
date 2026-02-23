@@ -189,7 +189,17 @@ def main(config: ControlLoopConfig):
                 elif state == "SEARCHING_FOR_QR":
                     # Look for QR in head_camera_image
                     if "head_camera_image" in obs:
+
+                        # diagnosis:
+                        try:
+                            print("HEAD_IMG:", getattr(img, "shape", None), getattr(img, "dtype", None),
+                                "contiguous:", img.flags["C_CONTIGUOUS"] if hasattr(img, "flags") else None,
+                                "min/max:", None if img is None else (np.min(img), np.max(img)))
+                        except Exception as e:
+                            print("Error inspecting head_camera_image:", e)
+
                         img = obs["head_camera_image"]
+                        img = np.flipud(img)
                         # Convert RGB to BGR for OpenCV
                         bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                         data, bbox, rectified_qr = qr_detector.detectAndDecode(bgr_img)
@@ -207,6 +217,10 @@ def main(config: ControlLoopConfig):
                 elif state == "MANEUVERING_TO_QR":
                     if "head_camera_image" in obs:
                         img = obs["head_camera_image"]
+
+
+
+                        img = np.flipud(img)
                         bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                         data, bbox, _ = qr_detector.detectAndDecode(bgr_img)
                         if data and bbox is not None:
@@ -246,11 +260,15 @@ def main(config: ControlLoopConfig):
 
                 # --- Visualization: Camera Stream ---
                 if "head_camera_image" in obs:
+
+
+                    # Note: img is already flipped and BGR-converted if we entered search/maneuver states,
+                    # but for safety/consistency we re-process here if not already done.
                     img = obs["head_camera_image"]
+                    img = np.flipud(img)
                     bgr_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                     
-                    # Redetection for visualization if we haven't already in this frame
-                    # (In a real scenario, we'd reuse the existing bbox/data)
+                    # Redetection for visualization to draw the box
                     data, bbox, _ = qr_detector.detectAndDecode(bgr_img)
                     if data and bbox is not None:
                         # Draw bounding box
@@ -307,7 +325,11 @@ def main(config: ControlLoopConfig):
                             np.array(rgba),
                         )
 
-            if env.sim and (not env.sim.sim_thread or not env.sim.sim_thread.is_alive()):
+            if (
+                env.sim
+                and not config.sim_sync_mode
+                and (not env.sim.sim_thread or not env.sim.sim_thread.is_alive())
+            ):
                 break
 
             rate.sleep()

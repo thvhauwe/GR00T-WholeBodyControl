@@ -97,6 +97,7 @@ class G1Env(HumanoidEnv):
         sim_num_steps = int(self.config["REWARD_DT"] / self.config["SIMULATE_DT"])
         for _ in range(sim_num_steps):
             self.sim.sim_env.sim_step()
+        self.sim.sim_env.update_render_caches()
         self.sim.sim_env.update_viewer()
 
     def body(self) -> G1Body:
