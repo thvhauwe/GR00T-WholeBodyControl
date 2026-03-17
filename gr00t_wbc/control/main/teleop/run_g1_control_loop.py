@@ -2,14 +2,19 @@ from copy import deepcopy
 import time
 
 import tyro
+from geometry_msgs.msg import PoseStamped, TwistStamped
+from sensor_msgs.msg import JointState
 
 from gr00t_wbc.control.envs.g1.g1_env import G1Env
 from gr00t_wbc.control.main.constants import (
     CONTROL_GOAL_TOPIC,
+    BASE_POSE_TOPIC_NAME,
+    BASE_TWIST_TOPIC_NAME,
     DEFAULT_BASE_HEIGHT,
     DEFAULT_NAV_CMD,
     DEFAULT_WRIST_POSE,
     JOINT_SAFETY_STATUS_TOPIC,
+    JOINT_STATE_TOPIC_NAME,
     LOWER_BODY_POLICY_STATUS_TOPIC,
     ROBOT_CONFIG_TOPIC,
     STATE_TOPIC_NAME,
@@ -48,6 +53,9 @@ def main(config: ControlLoopConfig):
     data_exp_pub = ROSMsgPublisher(STATE_TOPIC_NAME)
     lower_body_policy_status_pub = ROSMsgPublisher(LOWER_BODY_POLICY_STATUS_TOPIC)
     joint_safety_status_pub = ROSMsgPublisher(JOINT_SAFETY_STATUS_TOPIC)
+    joint_state_pub = node.create_publisher(JointState, JOINT_STATE_TOPIC_NAME, 1)
+    base_pose_pub = node.create_publisher(PoseStamped, BASE_POSE_TOPIC_NAME, 1)
+    base_twist_pub = node.create_publisher(TwistStamped, BASE_TWIST_TOPIC_NAME, 1)
 
     # Initialize telemetry
     telemetry = Telemetry(window_size=100)
@@ -67,6 +75,7 @@ def main(config: ControlLoopConfig):
         env.start_simulator()
 
     wbc_policy = get_wbc_policy("g1", robot_model, wbc_config, config.upper_body_joint_speed)
+    joint_names = robot_model.joint_names
 
     keyboard_listener_pub = KeyboardListenerPublisher()
     keyboard_estop = KeyboardEStop()
@@ -206,6 +215,40 @@ def main(config: ControlLoopConfig):
                         }
                     )
                 data_exp_pub.publish(msg)
+
+                stamp = node.get_clock().now().to_msg()
+                joint_state_msg = JointState()
+                joint_state_msg.header.stamp = stamp
+                joint_state_msg.header.frame_id = "world"
+                joint_state_msg.name = list(joint_names)
+                joint_state_msg.position = [float(value) for value in obs["q"]]
+                joint_state_msg.velocity = [float(value) for value in obs["dq"]]
+                joint_state_pub.publish(joint_state_msg)
+
+                base_pose = obs["floating_base_pose"]
+                base_pose_msg = PoseStamped()
+                base_pose_msg.header.stamp = stamp
+                base_pose_msg.header.frame_id = "world"
+                base_pose_msg.pose.position.x = float(base_pose[0])
+                base_pose_msg.pose.position.y = float(base_pose[1])
+                base_pose_msg.pose.position.z = float(base_pose[2])
+                base_pose_msg.pose.orientation.w = float(base_pose[3])
+                base_pose_msg.pose.orientation.x = float(base_pose[4])
+                base_pose_msg.pose.orientation.y = float(base_pose[5])
+                base_pose_msg.pose.orientation.z = float(base_pose[6])
+                base_pose_pub.publish(base_pose_msg)
+
+                base_twist = obs["floating_base_vel"]
+                base_twist_msg = TwistStamped()
+                base_twist_msg.header.stamp = stamp
+                base_twist_msg.header.frame_id = "world"
+                base_twist_msg.twist.linear.x = float(base_twist[0])
+                base_twist_msg.twist.linear.y = float(base_twist[1])
+                base_twist_msg.twist.linear.z = float(base_twist[2])
+                base_twist_msg.twist.angular.x = float(base_twist[3])
+                base_twist_msg.twist.angular.y = float(base_twist[4])
+                base_twist_msg.twist.angular.z = float(base_twist[5])
+                base_twist_pub.publish(base_twist_msg)
                 end_time = time.monotonic()
 
             if env.sim and (not env.sim.sim_thread or not env.sim.sim_thread.is_alive()):
